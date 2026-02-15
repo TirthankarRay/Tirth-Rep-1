@@ -96,9 +96,9 @@ const TimeToTreatmentChart: React.FC<TimeToTreatmentChartProps> = ({ data }) => 
           </p>
         </div>
         <div className="text-center">
-          <p className="text-sm text-gray-500">Within Target (<=21d)</p>
+          <p className="text-sm text-gray-500">{"Within Target (\u226421d)"}</p>
           <p className="text-xl font-bold text-green-600">
-            {(data.within_target_rate * 100).toFixed(1)}%
+            {data.within_target_rate.toFixed(1)}%
           </p>
         </div>
       </div>

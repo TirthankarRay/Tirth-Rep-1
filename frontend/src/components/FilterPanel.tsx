@@ -3,7 +3,7 @@ import { Filters } from "../types/index";
 
 interface FilterPanelProps {
   filters: Filters;
-  onFilterChange: (filters: Filters) => void;
+  onFilterChange: (key: string, value: string | null) => void;
 }
 
 const US_STATES = [
@@ -16,16 +16,13 @@ const US_STATES = [
 
 const FilterPanel: React.FC<FilterPanelProps> = ({ filters, onFilterChange }) => {
   const handleChange = (field: keyof Filters, value: string | null) => {
-    onFilterChange({ ...filters, [field]: value });
+    onFilterChange(field, value);
   };
 
   const handleReset = () => {
-    onFilterChange({
-      stage: null,
-      state: null,
-      lineOfTherapy: null,
-      insuranceType: null,
-    });
+    onFilterChange("stage", null);
+    onFilterChange("state", null);
+    onFilterChange("insuranceType", null);
   };
 
   const hasActiveFilters =
