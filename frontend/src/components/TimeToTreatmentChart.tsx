@@ -60,8 +60,7 @@ const TimeToTreatmentChart: React.FC<TimeToTreatmentChartProps> = ({ data }) => 
             }}
           />
           <ReferenceLine
-            x={null}
-            y={null}
+            x="22-30"
             label={{
               value: "21-day target",
               position: "top",
