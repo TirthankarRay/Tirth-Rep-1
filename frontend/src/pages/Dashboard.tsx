@@ -5,6 +5,7 @@ import TreatmentPatternsChart from "../components/TreatmentPatternsChart";
 import GeographicHeatMap from "../components/GeographicHeatMap";
 import PatientTable from "../components/PatientTable";
 import FilterPanel from "../components/FilterPanel";
+import InsightsSection from "../components/InsightsSection";
 import {
   useOverviewMetrics,
   useTimeToTreatment,
@@ -45,6 +46,13 @@ export default function Dashboard() {
       </div>
 
       {geoData && <GeographicHeatMap data={geoData} />}
+
+      <InsightsSection
+        metrics={metrics ?? null}
+        tttData={tttData ?? null}
+        txPatterns={txPatterns ?? null}
+        geoData={geoData ?? null}
+      />
 
       {patientData && (
         <PatientTable
