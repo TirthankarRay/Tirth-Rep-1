@@ -4,7 +4,7 @@ import Header from "./components/Header";
 
 export default function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename={import.meta.env.BASE_URL}>
       <div className="min-h-screen bg-gray-50">
         <Header />
         <main className="max-w-[1920px] mx-auto px-4 py-6">
