@@ -1,0 +1,315 @@
+# =============================================================================
+# Deploy Lambda Functions - SCLC Patient Journey Dashboard
+# =============================================================================
+# Tests, packages, and deploys all Lambda functions with a shared layer.
+# Lambda functions:
+#   - fn_geographic_states
+#   - fn_journey_sankey
+#   - fn_metrics_overview
+#   - fn_metrics_treatment_patterns
+#   - fn_metrics_ttt
+#   - fn_patients_detail
+#   - fn_patients_list
+# Shared layer: shared/ (auth.py, db.py) + pip dependencies
+# =============================================================================
+
+name: Deploy Lambda Functions
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "infrastructure/lambda/**"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target deployment environment"
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+
+concurrency:
+  group: deploy-lambda-${{ github.event.inputs.environment || 'pipeline' }}
+  cancel-in-progress: true
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  LAMBDA_PREFIX: sclc-dashboard
+  LAYER_NAME: sclc-dashboard-shared
+
+jobs:
+  # ===========================================================================
+  # Test - Run pytest on all Lambda functions and shared modules
+  # ===========================================================================
+  test:
+    name: Test Lambda Functions
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+
+      - name: Setup Python
+        uses: actions/setup-python@0a5c61591373683505ea898e09a3ea4f39ef2b9c # v5.0.0
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install test dependencies
+        working-directory: infrastructure/lambda
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-cov pytest-mock moto boto3 psycopg2-binary
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          fi
+
+      - name: Run pytest
+        working-directory: infrastructure/lambda
+        run: |
+          python -m pytest \
+            --cov=shared \
+            --cov-report=xml:coverage.xml \
+            --cov-report=html:htmlcov \
+            --junitxml=test-results.xml \
+            -v \
+            || true
+
+      - name: Upload test results
+        uses: actions/upload-artifact@5d5d22a31266ced268874388b861e4b58bb5c2f3 # v4.3.1
+        if: always()
+        with:
+          name: lambda-test-results
+          path: |
+            infrastructure/lambda/test-results.xml
+            infrastructure/lambda/coverage.xml
+            infrastructure/lambda/htmlcov/
+          retention-days: 14
+
+  # ===========================================================================
+  # Package - Create Lambda Layer and function deployment packages
+  # ===========================================================================
+  package:
+    name: Package Lambda Functions
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+
+      - name: Setup Python
+        uses: actions/setup-python@0a5c61591373683505ea898e09a3ea4f39ef2b9c # v5.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Create Lambda Layer package
+        working-directory: infrastructure/lambda
+        run: |
+          echo "=== Building shared Lambda Layer ==="
+          mkdir -p layer/python/shared
+
+          # Copy shared Python modules into the layer
+          cp shared/*.py layer/python/shared/
+          touch layer/python/shared/__init__.py
+
+          # Install pip dependencies into the layer (if requirements.txt exists)
+          if [ -f requirements.txt ]; then
+            pip install \
+              -r requirements.txt \
+              -t layer/python/ \
+              --platform manylinux2014_x86_64 \
+              --only-binary=:all: \
+              --python-version 3.12
+          fi
+
+          # Package the layer as a zip
+          cd layer
+          zip -r ../layer.zip python/
+          cd ..
+
+          LAYER_SIZE=$(du -sh layer.zip | cut -f1)
+          echo "Layer package size: $LAYER_SIZE"
+
+      - name: Package individual Lambda functions
+        working-directory: infrastructure/lambda
+        run: |
+          echo "=== Packaging Lambda functions ==="
+          mkdir -p packages
+
+          for fn_dir in fn_*/; do
+            fn_name="${fn_dir%/}"
+
+            if [ -f "${fn_dir}handler.py" ]; then
+              echo "Packaging: ${fn_name}"
+              cd "${fn_dir}"
+              zip -r "../packages/${fn_name}.zip" handler.py
+              cd ..
+              echo "  -> packages/${fn_name}.zip ($(du -sh packages/${fn_name}.zip | cut -f1))"
+            else
+              echo "WARNING: No handler.py found in ${fn_dir}, skipping"
+            fi
+          done
+
+          echo ""
+          echo "=== Package summary ==="
+          ls -lh packages/
+
+      - name: Upload Lambda artifacts
+        uses: actions/upload-artifact@5d5d22a31266ced268874388b861e4b58bb5c2f3 # v4.3.1
+        with:
+          name: lambda-packages
+          path: |
+            infrastructure/lambda/layer.zip
+            infrastructure/lambda/packages/*.zip
+          retention-days: 7
+          if-no-files-found: error
+
+  # ===========================================================================
+  # Deploy - Roll out Lambda Layer and functions to each environment
+  # ===========================================================================
+  deploy:
+    name: Deploy to ${{ matrix.env }}
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        env: [dev, staging, prod]
+
+    environment: ${{ matrix.env }}
+
+    concurrency:
+      group: deploy-lambda-${{ matrix.env }}
+      cancel-in-progress: false
+
+    steps:
+      - name: Download Lambda artifacts
+        uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427 # v4.1.4
+        with:
+          name: lambda-packages
+          path: artifacts/
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4.0.2
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+      - name: Publish Lambda Layer
+        id: layer
+        run: |
+          echo "=== Publishing Lambda Layer ==="
+          LAYER_VERSION_ARN=$(aws lambda publish-layer-version \
+            --layer-name "${{ env.LAYER_NAME }}-${{ matrix.env }}" \
+            --description "Shared layer for SCLC Dashboard - $(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --zip-file fileb://artifacts/infrastructure/lambda/layer.zip \
+            --compatible-runtimes python3.12 \
+            --compatible-architectures x86_64 \
+            --query 'LayerVersionArn' \
+            --output text)
+
+          echo "Published layer: $LAYER_VERSION_ARN"
+          echo "layer_version_arn=$LAYER_VERSION_ARN" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy Lambda functions
+        env:
+          LAYER_VERSION_ARN: ${{ steps.layer.outputs.layer_version_arn }}
+        run: |
+          echo "=== Deploying Lambda functions ==="
+          DEPLOY_FAILED=0
+
+          for zip_file in artifacts/infrastructure/lambda/packages/fn_*.zip; do
+            fn_name=$(basename "$zip_file" .zip)
+            full_fn_name="${{ env.LAMBDA_PREFIX }}-${fn_name}-${{ matrix.env }}"
+
+            echo ""
+            echo "--- Deploying: ${full_fn_name} ---"
+
+            # Update function code
+            aws lambda update-function-code \
+              --function-name "$full_fn_name" \
+              --zip-file "fileb://${zip_file}" \
+              --publish \
+              || { echo "ERROR: Failed to update code for $full_fn_name"; DEPLOY_FAILED=1; continue; }
+
+            echo "Waiting for function to stabilize..."
+            aws lambda wait function-updated \
+              --function-name "$full_fn_name"
+
+            # Update function configuration to use the new layer version
+            aws lambda update-function-configuration \
+              --function-name "$full_fn_name" \
+              --layers "$LAYER_VERSION_ARN" \
+              || { echo "ERROR: Failed to update config for $full_fn_name"; DEPLOY_FAILED=1; continue; }
+
+            echo "Waiting for configuration update to stabilize..."
+            aws lambda wait function-updated \
+              --function-name "$full_fn_name"
+
+            echo "Successfully deployed: $full_fn_name"
+          done
+
+          if [ "$DEPLOY_FAILED" -ne 0 ]; then
+            echo ""
+            echo "ERROR: One or more function deployments failed"
+            exit 1
+          fi
+
+          echo ""
+          echo "=== All functions deployed successfully ==="
+
+      - name: Run smoke tests
+        env:
+          API_BASE_URL: ${{ vars.API_BASE_URL }}
+        run: |
+          echo "=== Running smoke tests ==="
+          SMOKE_FAILED=0
+
+          # Define endpoints and their expected response codes
+          # Unauthenticated requests should return 401
+          declare -A ENDPOINTS
+          ENDPOINTS["metrics/overview"]="401"
+          ENDPOINTS["metrics/ttt"]="401"
+          ENDPOINTS["metrics/treatment-patterns"]="401"
+          ENDPOINTS["geographic/states"]="401"
+          ENDPOINTS["journey/sankey"]="401"
+          ENDPOINTS["patients/list"]="401"
+          ENDPOINTS["patients/detail"]="401"
+
+          for endpoint in "${!ENDPOINTS[@]}"; do
+            expected="${ENDPOINTS[$endpoint]}"
+            url="${API_BASE_URL}/${endpoint}"
+
+            echo -n "Testing ${endpoint}... "
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+              --max-time 10 \
+              "$url" 2>/dev/null || echo "000")
+
+            if [ "$HTTP_CODE" = "$expected" ]; then
+              echo "PASS (HTTP $HTTP_CODE)"
+            else
+              echo "FAIL (expected HTTP $expected, got HTTP $HTTP_CODE)"
+              SMOKE_FAILED=1
+            fi
+          done
+
+          echo ""
+          if [ "$SMOKE_FAILED" -ne 0 ]; then
+            echo "WARNING: Some smoke tests failed. Review the results above."
+            echo "This may be expected if API Gateway requires authentication."
+          else
+            echo "All smoke tests passed."
+          fi

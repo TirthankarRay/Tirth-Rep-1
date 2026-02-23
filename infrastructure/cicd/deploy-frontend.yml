@@ -1,0 +1,277 @@
+# =============================================================================
+# Deploy Frontend - SCLC Patient Journey Dashboard
+# =============================================================================
+# Builds and deploys the React/Vite frontend to AWS S3 + CloudFront.
+# Follows a progressive deployment pipeline: dev -> staging -> prod
+# with manual approval gates for staging and production environments.
+# =============================================================================
+
+name: Deploy Frontend
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "frontend/**"
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target deployment environment"
+        required: true
+        type: choice
+        options:
+          - dev
+          - staging
+          - prod
+
+concurrency:
+  group: deploy-frontend-${{ github.event.inputs.environment || 'pipeline' }}
+  cancel-in-progress: true
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  # ===========================================================================
+  # Build - Lint, test, and compile the frontend application
+  # ===========================================================================
+  build:
+    name: Build Frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@60edb5dd545a775178f52524783378180af0d1f8 # v4.0.2
+        with:
+          node-version: 20
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Run linting
+        working-directory: frontend
+        run: npm run lint
+
+      - name: Run type check
+        working-directory: frontend
+        run: npx tsc --noEmit
+
+      - name: Run tests with coverage
+        working-directory: frontend
+        run: npm run test -- --coverage
+
+      - name: Build for production
+        working-directory: frontend
+        env:
+          VITE_API_URL: ${{ vars.VITE_API_URL }}
+          VITE_COGNITO_USER_POOL_ID: ${{ vars.VITE_COGNITO_USER_POOL_ID }}
+          VITE_COGNITO_CLIENT_ID: ${{ vars.VITE_COGNITO_CLIENT_ID }}
+        run: npm run build
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@5d5d22a31266ced268874388b861e4b58bb5c2f3 # v4.3.1
+        with:
+          name: frontend-build
+          path: frontend/dist/
+          retention-days: 7
+          if-no-files-found: error
+
+  # ===========================================================================
+  # Deploy Dev - Automatic deployment to development environment
+  # ===========================================================================
+  deploy-dev:
+    name: Deploy to Dev
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: dev
+
+    concurrency:
+      group: deploy-frontend-dev
+      cancel-in-progress: false
+
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427 # v4.1.4
+        with:
+          name: frontend-build
+          path: dist/
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4.0.2
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+      - name: Sync to S3
+        run: |
+          aws s3 sync dist/ s3://sclc-dashboard-frontend-dev/ \
+            --delete \
+            --cache-control "public, max-age=31536000, immutable" \
+            --exclude "index.html" \
+            --exclude "*.json"
+
+          # Upload index.html and JSON with no-cache headers
+          aws s3 cp dist/index.html s3://sclc-dashboard-frontend-dev/index.html \
+            --cache-control "no-cache, no-store, must-revalidate"
+
+          # Sync any JSON config files without aggressive caching
+          aws s3 sync dist/ s3://sclc-dashboard-frontend-dev/ \
+            --exclude "*" \
+            --include "*.json" \
+            --cache-control "no-cache, no-store, must-revalidate"
+
+      - name: Invalidate CloudFront cache
+        run: |
+          INVALIDATION_ID=$(aws cloudfront create-invalidation \
+            --distribution-id ${{ secrets.DISTRIBUTION_ID }} \
+            --paths "/*" \
+            --query 'Invalidation.Id' \
+            --output text)
+          echo "CloudFront invalidation created: $INVALIDATION_ID"
+
+          # Wait for invalidation to complete
+          aws cloudfront wait invalidation-completed \
+            --distribution-id ${{ secrets.DISTRIBUTION_ID }} \
+            --id "$INVALIDATION_ID"
+          echo "CloudFront invalidation completed"
+
+      - name: Verify deployment
+        run: |
+          echo "Dev deployment completed successfully"
+          echo "Distribution: ${{ secrets.DISTRIBUTION_ID }}"
+
+  # ===========================================================================
+  # Deploy Staging - Requires manual approval via environment protection rules
+  # ===========================================================================
+  deploy-staging:
+    name: Deploy to Staging
+    needs: deploy-dev
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: staging
+
+    concurrency:
+      group: deploy-frontend-staging
+      cancel-in-progress: false
+
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427 # v4.1.4
+        with:
+          name: frontend-build
+          path: dist/
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4.0.2
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+      - name: Sync to S3
+        run: |
+          aws s3 sync dist/ s3://sclc-dashboard-frontend-staging/ \
+            --delete \
+            --cache-control "public, max-age=31536000, immutable" \
+            --exclude "index.html" \
+            --exclude "*.json"
+
+          aws s3 cp dist/index.html s3://sclc-dashboard-frontend-staging/index.html \
+            --cache-control "no-cache, no-store, must-revalidate"
+
+          aws s3 sync dist/ s3://sclc-dashboard-frontend-staging/ \
+            --exclude "*" \
+            --include "*.json" \
+            --cache-control "no-cache, no-store, must-revalidate"
+
+      - name: Invalidate CloudFront cache
+        run: |
+          INVALIDATION_ID=$(aws cloudfront create-invalidation \
+            --distribution-id ${{ secrets.DISTRIBUTION_ID }} \
+            --paths "/*" \
+            --query 'Invalidation.Id' \
+            --output text)
+          echo "CloudFront invalidation created: $INVALIDATION_ID"
+
+          aws cloudfront wait invalidation-completed \
+            --distribution-id ${{ secrets.DISTRIBUTION_ID }} \
+            --id "$INVALIDATION_ID"
+          echo "CloudFront invalidation completed"
+
+      - name: Verify deployment
+        run: |
+          echo "Staging deployment completed successfully"
+          echo "Distribution: ${{ secrets.DISTRIBUTION_ID }}"
+
+  # ===========================================================================
+  # Deploy Prod - Requires manual approval via environment protection rules
+  # ===========================================================================
+  deploy-prod:
+    name: Deploy to Production
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: prod
+
+    concurrency:
+      group: deploy-frontend-prod
+      cancel-in-progress: false
+
+    steps:
+      - name: Download build artifact
+        uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427 # v4.1.4
+        with:
+          name: frontend-build
+          path: dist/
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@e3dd6a429d7300a6a4c196c26e071d42e0343502 # v4.0.2
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+      - name: Sync to S3
+        run: |
+          aws s3 sync dist/ s3://sclc-dashboard-frontend-prod/ \
+            --delete \
+            --cache-control "public, max-age=31536000, immutable" \
+            --exclude "index.html" \
+            --exclude "*.json"
+
+          aws s3 cp dist/index.html s3://sclc-dashboard-frontend-prod/index.html \
+            --cache-control "no-cache, no-store, must-revalidate"
+
+          aws s3 sync dist/ s3://sclc-dashboard-frontend-prod/ \
+            --exclude "*" \
+            --include "*.json" \
+            --cache-control "no-cache, no-store, must-revalidate"
+
+      - name: Invalidate CloudFront cache
+        run: |
+          INVALIDATION_ID=$(aws cloudfront create-invalidation \
+            --distribution-id ${{ secrets.DISTRIBUTION_ID }} \
+            --paths "/*" \
+            --query 'Invalidation.Id' \
+            --output text)
+          echo "CloudFront invalidation created: $INVALIDATION_ID"
+
+          aws cloudfront wait invalidation-completed \
+            --distribution-id ${{ secrets.DISTRIBUTION_ID }} \
+            --id "$INVALIDATION_ID"
+          echo "CloudFront invalidation completed"
+
+      - name: Verify deployment
+        run: |
+          echo "Production deployment completed successfully"
+          echo "Distribution: ${{ secrets.DISTRIBUTION_ID }}"

@@ -1,0 +1,8 @@
+# Lambda Layer dependencies for SCLC Patient Journey Dashboard API
+#
+# boto3 is included in the AWS Lambda Python runtime but pinned here
+# for reproducibility when building the Lambda Layer.
+boto3>=1.34.0,<2.0.0
+
+# JWT validation for Cognito tokens
+python-jose[cryptography]>=3.3.0,<4.0.0

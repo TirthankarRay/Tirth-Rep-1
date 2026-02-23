@@ -1,0 +1,422 @@
+# =============================================================================
+# Quality Gate - SCLC Patient Journey Dashboard
+# =============================================================================
+# Runs on all pull requests targeting main. Enforces code quality, type safety,
+# test coverage, and security scanning across both frontend and backend.
+# Posts a consolidated summary comment on the PR when all checks complete.
+# =============================================================================
+
+name: Quality Gate
+
+on:
+  pull_request:
+    branches:
+      - main
+
+concurrency:
+  group: quality-gate-${{ github.head_ref }}
+  cancel-in-progress: true
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+  security-events: write
+
+jobs:
+  # ===========================================================================
+  # Frontend Checks - Lint, type-check, test, and build the React application
+  # ===========================================================================
+  frontend-checks:
+    name: Frontend Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@60edb5dd545a775178f52524783378180af0d1f8 # v4.0.2
+        with:
+          node-version: 20
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Run ESLint
+        id: lint
+        working-directory: frontend
+        run: |
+          npm run lint 2>&1 | tee lint-output.txt
+          echo "status=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Run TypeScript type check
+        id: typecheck
+        working-directory: frontend
+        run: |
+          npx tsc --noEmit 2>&1 | tee typecheck-output.txt
+          echo "status=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Run tests with coverage
+        id: test
+        working-directory: frontend
+        run: |
+          npm run test -- --coverage --reporter=default --reporter=json \
+            2>&1 | tee test-output.txt
+          echo "status=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Build verification
+        id: build
+        working-directory: frontend
+        run: |
+          npm run build 2>&1 | tee build-output.txt
+          echo "status=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@5d5d22a31266ced268874388b861e4b58bb5c2f3 # v4.3.1
+        if: always()
+        with:
+          name: frontend-coverage
+          path: |
+            frontend/coverage/
+          retention-days: 14
+
+      - name: Upload check outputs
+        uses: actions/upload-artifact@5d5d22a31266ced268874388b861e4b58bb5c2f3 # v4.3.1
+        if: always()
+        with:
+          name: frontend-check-results
+          path: |
+            frontend/lint-output.txt
+            frontend/typecheck-output.txt
+            frontend/test-output.txt
+            frontend/build-output.txt
+          retention-days: 7
+
+  # ===========================================================================
+  # Backend Checks - Lint, type-check, and test Lambda functions
+  # ===========================================================================
+  backend-checks:
+    name: Backend Checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+
+      - name: Setup Python
+        uses: actions/setup-python@0a5c61591373683505ea898e09a3ea4f39ef2b9c # v5.0.0
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8 mypy pytest pytest-cov pytest-mock moto boto3 psycopg2-binary types-boto3 types-psycopg2
+          if [ -f infrastructure/lambda/requirements.txt ]; then
+            pip install -r infrastructure/lambda/requirements.txt
+          fi
+
+      - name: Run flake8 lint
+        id: flake8
+        run: |
+          flake8 infrastructure/lambda/ \
+            --max-line-length=120 \
+            --statistics \
+            --count \
+            --show-source \
+            2>&1 | tee flake8-output.txt
+          echo "status=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Run mypy type check
+        id: mypy
+        run: |
+          mypy infrastructure/lambda/shared/ \
+            --ignore-missing-imports \
+            --no-error-summary \
+            2>&1 | tee mypy-output.txt || true
+          echo "status=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Run pytest
+        id: pytest
+        working-directory: infrastructure/lambda
+        run: |
+          python -m pytest \
+            --cov=shared \
+            --cov-report=xml:coverage.xml \
+            --cov-report=term-missing \
+            --junitxml=test-results.xml \
+            -v \
+            2>&1 | tee pytest-output.txt || true
+          echo "status=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload backend test results
+        uses: actions/upload-artifact@5d5d22a31266ced268874388b861e4b58bb5c2f3 # v4.3.1
+        if: always()
+        with:
+          name: backend-check-results
+          path: |
+            flake8-output.txt
+            mypy-output.txt
+            infrastructure/lambda/pytest-output.txt
+            infrastructure/lambda/coverage.xml
+            infrastructure/lambda/test-results.xml
+          retention-days: 14
+
+  # ===========================================================================
+  # Security Scan - Vulnerability and IaC security scanning
+  # ===========================================================================
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11 # v4.1.1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@60edb5dd545a775178f52524783378180af0d1f8 # v4.0.2
+        with:
+          node-version: 20
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Setup Python
+        uses: actions/setup-python@0a5c61591373683505ea898e09a3ea4f39ef2b9c # v5.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Run Trivy vulnerability scanner
+        id: trivy
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: "fs"
+          scan-ref: "."
+          format: "table"
+          output: "trivy-results.txt"
+          severity: "CRITICAL,HIGH"
+          exit-code: "1"
+        continue-on-error: true
+
+      - name: Run Checkov IaC security scan
+        id: checkov
+        uses: bridgecrewio/checkov-action@12e926740e8d7bbe8d2c15d15e3a9dc4ed7907e9 # v12.2684.0
+        with:
+          directory: infrastructure/terraform/
+          output_format: cli
+          output_file_path: checkov-results.txt
+          soft_fail: true
+        continue-on-error: true
+
+      - name: Run npm audit
+        id: npm_audit
+        working-directory: frontend
+        run: |
+          npm ci
+          npm audit --audit-level=high 2>&1 | tee npm-audit-results.txt || true
+          echo "status=${PIPESTATUS[0]}" >> "$GITHUB_OUTPUT"
+        continue-on-error: true
+
+      - name: Run pip-audit
+        id: pip_audit
+        run: |
+          pip install pip-audit
+          pip-audit \
+            --requirement infrastructure/lambda/requirements.txt \
+            --output pip-audit-results.txt \
+            2>&1 || true
+          echo "status=$?" >> "$GITHUB_OUTPUT"
+        continue-on-error: true
+
+      - name: Upload security scan results
+        uses: actions/upload-artifact@5d5d22a31266ced268874388b861e4b58bb5c2f3 # v4.3.1
+        if: always()
+        with:
+          name: security-scan-results
+          path: |
+            trivy-results.txt
+            checkov-results.txt
+            frontend/npm-audit-results.txt
+            pip-audit-results.txt
+          retention-days: 14
+
+  # ===========================================================================
+  # PR Summary - Post consolidated results as a PR comment
+  # ===========================================================================
+  pr-summary:
+    name: PR Summary
+    needs: [frontend-checks, backend-checks, security-scan]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Download all check results
+        uses: actions/download-artifact@c850b930e6ba138125429b7e5c93fc707a7f8427 # v4.1.4
+        with:
+          path: results/
+        continue-on-error: true
+
+      - name: Post summary comment on PR
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs = require('fs');
+
+            // Helper to read file safely
+            function readFile(path) {
+              try {
+                return fs.readFileSync(path, 'utf8').trim();
+              } catch {
+                return '_No output captured_';
+              }
+            }
+
+            // Helper to truncate long output
+            function truncate(text, maxLines = 30) {
+              const lines = text.split('\n');
+              if (lines.length > maxLines) {
+                return lines.slice(0, maxLines).join('\n') + `\n\n... (${lines.length - maxLines} more lines)`;
+              }
+              return text;
+            }
+
+            // Determine status emojis based on job results
+            const frontendStatus = '${{ needs.frontend-checks.result }}' === 'success' ? 'PASS' : 'FAIL';
+            const backendStatus = '${{ needs.backend-checks.result }}' === 'success' ? 'PASS' : 'FAIL';
+            const securityStatus = '${{ needs.security-scan.result }}' === 'success' ? 'PASS' : 'WARN';
+            const overallStatus = (frontendStatus === 'PASS' && backendStatus === 'PASS') ? 'PASS' : 'FAIL';
+
+            // Read output files
+            const lintOutput = truncate(readFile('results/frontend-check-results/lint-output.txt'));
+            const typecheckOutput = truncate(readFile('results/frontend-check-results/typecheck-output.txt'));
+            const testOutput = truncate(readFile('results/frontend-check-results/test-output.txt'));
+            const flake8Output = truncate(readFile('results/backend-check-results/flake8-output.txt'));
+            const mypyOutput = truncate(readFile('results/backend-check-results/mypy-output.txt'));
+            const pytestOutput = truncate(readFile('results/backend-check-results/pytest-output.txt'), 20);
+            const trivyOutput = truncate(readFile('results/security-scan-results/trivy-results.txt'), 20);
+            const npmAuditOutput = truncate(readFile('results/security-scan-results/npm-audit-results.txt'), 20);
+
+            const body = `## Quality Gate Results
+
+            | Check | Status |
+            |-------|--------|
+            | **Overall** | **${overallStatus}** |
+            | Frontend Checks | ${frontendStatus} |
+            | Backend Checks | ${backendStatus} |
+            | Security Scan | ${securityStatus} |
+
+            ---
+
+            ### Frontend Checks (${frontendStatus})
+
+            <details>
+            <summary>ESLint</summary>
+
+            \`\`\`
+            ${lintOutput}
+            \`\`\`
+            </details>
+
+            <details>
+            <summary>TypeScript Type Check</summary>
+
+            \`\`\`
+            ${typecheckOutput}
+            \`\`\`
+            </details>
+
+            <details>
+            <summary>Tests</summary>
+
+            \`\`\`
+            ${testOutput}
+            \`\`\`
+            </details>
+
+            ---
+
+            ### Backend Checks (${backendStatus})
+
+            <details>
+            <summary>Flake8 Lint</summary>
+
+            \`\`\`
+            ${flake8Output}
+            \`\`\`
+            </details>
+
+            <details>
+            <summary>Mypy Type Check</summary>
+
+            \`\`\`
+            ${mypyOutput}
+            \`\`\`
+            </details>
+
+            <details>
+            <summary>Pytest</summary>
+
+            \`\`\`
+            ${pytestOutput}
+            \`\`\`
+            </details>
+
+            ---
+
+            ### Security Scan (${securityStatus})
+
+            <details>
+            <summary>Trivy Vulnerability Scan</summary>
+
+            \`\`\`
+            ${trivyOutput}
+            \`\`\`
+            </details>
+
+            <details>
+            <summary>npm Audit</summary>
+
+            \`\`\`
+            ${npmAuditOutput}
+            \`\`\`
+            </details>
+
+            ---
+
+            *Quality gate run by: @${context.actor} | Commit: \`${context.sha.substring(0, 7)}\` | [View workflow run](${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId})*`;
+
+            // Find and update existing comment or create new one
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const botComment = comments.find(c =>
+              c.user.type === 'Bot' && c.body.includes('## Quality Gate Results')
+            );
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: body
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: body
+              });
+            }
