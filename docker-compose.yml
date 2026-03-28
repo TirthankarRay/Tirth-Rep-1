@@ -45,17 +45,9 @@ services:
     command: npm run dev -- --host 0.0.0.0
 
   minutes-mcp:
-    build:
-      context: ./minutes
-      target: mcp-server
+    build: ./minutes
     ports:
       - "3100:3100"
-    restart: unless-stopped
-
-  minutes-watcher:
-    build:
-      context: ./minutes
-      target: cli
     volumes:
       - minutes-inbox:/data/inbox
       - minutes-meetings:/data/meetings
