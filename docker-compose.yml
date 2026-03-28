@@ -44,5 +44,17 @@ services:
       - /app/node_modules
     command: npm run dev -- --host 0.0.0.0
 
+  minutes-mcp:
+    build: ./minutes
+    ports:
+      - "3100:3100"
+    volumes:
+      - minutes-inbox:/data/inbox
+      - minutes-meetings:/data/meetings
+      - ./minutes/config.toml:/root/.config/minutes/config.toml:ro
+    restart: unless-stopped
+
 volumes:
   pgdata:
+  minutes-inbox:
+  minutes-meetings:
