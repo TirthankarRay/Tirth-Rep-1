@@ -1,0 +1,96 @@
+name: Deploy Minutes Service
+
+on:
+  push:
+    branches: [main, claude/**]
+    paths:
+      - "minutes/**"
+      - ".github/workflows/deploy-minutes.yml"
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+  MCP_IMAGE: ghcr.io/${{ github.repository }}/minutes-mcp
+  CLI_IMAGE: ghcr.io/${{ github.repository }}/minutes-cli
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-mcp-server:
+    name: Build MCP Server Image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/build-push-action@v5
+        with:
+          context: ./minutes
+          target: mcp-server
+          push: true
+          tags: |
+            ${{ env.MCP_IMAGE }}:${{ github.sha }}
+            ${{ env.MCP_IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  build-cli:
+    name: Build CLI Image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/build-push-action@v5
+        with:
+          context: ./minutes
+          target: cli
+          push: true
+          tags: |
+            ${{ env.CLI_IMAGE }}:${{ github.sha }}
+            ${{ env.CLI_IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  test:
+    name: Smoke Test
+    needs: [build-mcp-server]
+    runs-on: ubuntu-latest
+    services:
+      minutes-mcp:
+        image: ghcr.io/${{ github.repository }}/minutes-mcp:${{ github.sha }}
+        ports:
+          - 3100:3100
+    steps:
+      - name: Wait for service
+        run: |
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3100/health 2>/dev/null; then
+              echo "MCP server is up"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "MCP server failed to start"
+          exit 1
+
+      - name: Verify MCP endpoint
+        run: |
+          curl -sf http://localhost:3100/health
+          echo "MCP server smoke test passed"
