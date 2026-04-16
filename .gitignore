@@ -23,3 +23,6 @@ Thumbs.db
 
 # Docker
 pgdata/
+
+# External worktrees (unrelated projects checked out locally)
+career-ops/
