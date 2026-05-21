@@ -1,0 +1,10 @@
+vault:
+  name: commercial-onco-brandx
+  type: commercial
+  residency: us
+  rule_pack: commercial-mlr-strict
+  default_branch: main
+  audience: ["bu:commercial-onco"]
+  description: |
+    Pharma commercial knowledge vault for BrandX (fictional NSCLC asset).
+    Files-as-truth, branch-per-proposal, materiality-routed review.

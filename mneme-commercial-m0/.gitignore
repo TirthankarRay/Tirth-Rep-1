@@ -25,3 +25,8 @@ postgres-data/
 
 # Local-only operator overrides
 .local/
+
+# The vault is a *runtime* git repo — initialized on `make seed`. We track
+# its markdown contents in the outer monorepo but never the inner .git/.
+vault/.git/
+

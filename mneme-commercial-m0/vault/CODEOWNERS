@@ -1,0 +1,11 @@
+# Path-based reviewer routing for the commercial vault.
+# Matched on file path; routes to roles that must co-sign on proposals.
+
+brand-strategy/        @role:brand @role:medical
+competitive-landscape/ @role:brand @role:medical @role:mlr
+payer-coverage/        @role:market-access
+hcp-segmentation/      @role:brand @role:commercial-ops
+msl-insights/          @role:medical
+launch-milestones/     @role:launch-pm
+pricing/               @role:legal @role:market-access
+entities/              @role:ontology-curator

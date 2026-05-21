@@ -8,6 +8,7 @@ function used by the index-sync parser and the validator service.
 
 from __future__ import annotations
 
+import datetime as _dt
 import json
 import os
 from functools import lru_cache
@@ -17,6 +18,22 @@ from typing import Any
 from jsonschema import Draft202012Validator
 from referencing import Registry, Resource
 from referencing.jsonschema import DRAFT202012
+
+
+def normalize(value: Any) -> Any:
+    """Coerce dates/datetimes to ISO strings so JSON Schema string-typed
+    fields (with format: date / date-time) accept YAML-loaded date literals.
+    Recursive; safe to call on any frontmatter dict.
+    """
+    if isinstance(value, _dt.datetime):
+        return value.isoformat()
+    if isinstance(value, _dt.date):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {k: normalize(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [normalize(v) for v in value]
+    return value
 
 
 DEFAULT_MANIFEST_PATH = Path(
@@ -77,11 +94,12 @@ class SchemaSet:
             self._schemas[type_name],
             registry=self._registry,
         )
+        normalized = normalize(doc)
         errors = []
-        for err in sorted(validator.iter_errors(doc), key=lambda e: list(e.absolute_path)):
+        for err in sorted(validator.iter_errors(normalized), key=lambda e: list(e.absolute_path)):
             path = "/".join(str(p) for p in err.absolute_path) or "(root)"
             errors.append(f"{path}: {err.message}")
         return errors
 
 
-__all__ = ["load", "SchemaSet", "SchemaError"]
+__all__ = ["load", "SchemaSet", "SchemaError", "normalize"]
