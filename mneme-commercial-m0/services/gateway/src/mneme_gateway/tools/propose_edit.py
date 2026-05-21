@@ -45,6 +45,11 @@ VAULT_PATH = Path(os.environ.get("VAULT_PATH", "/vault"))
 MANIFEST_PATH = Path(os.environ.get("MNEME_MANIFEST_PATH", "/manifest"))
 INDEX_SYNC_URL = os.environ.get("INDEX_SYNC_URL", "http://index-sync:8003")
 
+# Serialize all git operations against the working tree. A bind-mounted
+# vault is a single shared working copy; concurrent checkout/merge would
+# corrupt it. M1 can move to a bare repo + worktree per call.
+_GIT_LOCK = asyncio.Lock()
+
 # Identify the body sections we know are likely competitor-data sections
 COMPETITOR_SECTION_HINTS = ("competitor", "vs", "competitive")
 
@@ -291,37 +296,42 @@ async def propose_edit(
 
     # Always perform branch + commit so the change has a real audit trail —
     # even rejected proposals are a record. Then merge or leave for review
-    # based on the verdict.
-    full_path = VAULT_PATH / target_path
-    full_path.parent.mkdir(parents=True, exist_ok=True)
-    original_branch = repo.active_branch.name if not repo.head.is_detached else "main"
-    repo.git.checkout("-b", branch)
-    full_path.write_text(rendered)
-    repo.git.add(target_path)
-    commit_msg = (
-        f"proposal: {prop_id} on {target_path}\n\n"
-        f"By: {identity.user_id}\n"
-        f"Verdict: {verdict_label} ({verdict_rule})\n"
-        f"Rationale: {rationale}\n"
-    )
-    repo.git.commit("-m", commit_msg, "--author", f"{identity.user_id} <{identity.user_id}@mneme.local>")
-
+    # based on the verdict. _GIT_LOCK serializes against concurrent callers
+    # — the bind-mounted vault has one shared working copy.
     state: str
     triggered_sync = False
-    if verdict_label == "reject":
-        # Don't merge. Leave branch for forensics; we could prune later.
-        repo.git.checkout(original_branch)
-        state = "rejected"
-    elif verdict_label in ("routine", "attention"):
-        # Merge to main
-        repo.git.checkout(original_branch)
-        repo.git.merge(branch, "--no-ff", "-m", f"merge {prop_id}: {verdict_label}")
-        state = "merged"
-        triggered_sync = True
-    else:
-        # material → leave on branch, queue for review
-        repo.git.checkout(original_branch)
-        state = "needs_review"
+    async with _GIT_LOCK:
+        full_path = VAULT_PATH / target_path
+        full_path.parent.mkdir(parents=True, exist_ok=True)
+        original_branch = repo.active_branch.name if not repo.head.is_detached else "main"
+        repo.git.checkout("-b", branch)
+        full_path.write_text(rendered)
+        repo.git.add(target_path)
+        commit_msg = (
+            f"proposal: {prop_id} on {target_path}\n\n"
+            f"By: {identity.user_id}\n"
+            f"Verdict: {verdict_label} ({verdict_rule})\n"
+            f"Rationale: {rationale}\n"
+        )
+        repo.git.commit(
+            "-m", commit_msg,
+            "--author", f"{identity.user_id} <{identity.user_id}@mneme.local>",
+        )
+
+        if verdict_label == "reject":
+            # Don't merge. Leave branch for forensics; we could prune later.
+            repo.git.checkout(original_branch)
+            state = "rejected"
+        elif verdict_label in ("routine", "attention"):
+            # Merge to main
+            repo.git.checkout(original_branch)
+            repo.git.merge(branch, "--no-ff", "-m", f"merge {prop_id}: {verdict_label}")
+            state = "merged"
+            triggered_sync = True
+        else:
+            # material → leave on branch, queue for review
+            repo.git.checkout(original_branch)
+            state = "needs_review"
 
     # Persist proposal + queue + audit
     diff = [{"path": s.get("path"), "before": _section_excerpt(old_body, s.get("path")),
