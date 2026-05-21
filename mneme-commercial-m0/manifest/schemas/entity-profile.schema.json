@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mneme.local/schemas/entity-profile.schema.json",
+  "title": "Entity profile",
+  "allOf": [{ "$ref": "_core.schema.json" }],
+  "type": "object",
+  "required": ["entity_kind", "canonical_name"],
+  "properties": {
+    "type": { "const": "entity-profile" },
+    "entity_kind": {
+      "type": "string",
+      "enum": ["brand", "molecule", "indication", "payer"]
+    },
+    "canonical_name": { "type": "string", "minLength": 1 },
+    "aliases": { "type": "array", "items": { "type": "string" } }
+  }
+}

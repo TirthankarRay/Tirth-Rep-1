@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mneme.local/schemas/competitive-landscape.schema.json",
+  "title": "Competitive landscape",
+  "allOf": [{ "$ref": "_core.schema.json" }],
+  "type": "object",
+  "properties": {
+    "type": { "const": "competitive-landscape" },
+    "entities": {
+      "type": "object",
+      "required": ["brand", "competitor", "indication"],
+      "properties": {
+        "brand": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "competitor": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "indication": { "type": "array", "minItems": 1, "items": { "type": "string" } }
+      }
+    }
+  }
+}

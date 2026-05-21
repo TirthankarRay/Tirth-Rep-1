@@ -1,0 +1,4 @@
+slug,canonical_name,aliases,icd10
+nsclc,Non-small cell lung cancer,"NSCLC,non-small-cell lung carcinoma",C34
+sclc,Small cell lung cancer,"SCLC",C34
+breast-her2,HER2+ breast cancer,"HER2-positive breast cancer",C50

@@ -1,0 +1,4 @@
+slug,canonical_name,aliases,target,modality
+mol-1234,MOL-1234,"BrandX active",MET-exon14,small-molecule
+mol-9876,MOL-9876,"BrandY active",MET-exon14,small-molecule
+mol-5500,MOL-5500,"BrandZ active",EGFR-T790M,small-molecule

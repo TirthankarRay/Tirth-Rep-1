@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mneme.local/schemas/hcp-segmentation.schema.json",
+  "title": "HCP segmentation",
+  "allOf": [{ "$ref": "_core.schema.json" }],
+  "type": "object",
+  "properties": {
+    "type": { "const": "hcp-segmentation" },
+    "segment": { "type": "string" },
+    "entities": {
+      "type": "object",
+      "required": ["brand"],
+      "properties": {
+        "brand": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "indication": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

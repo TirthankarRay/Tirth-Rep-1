@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mneme.local/schemas/msl-insight.schema.json",
+  "title": "MSL insight",
+  "allOf": [{ "$ref": "_core.schema.json" }],
+  "type": "object",
+  "properties": {
+    "type": { "const": "msl-insight" },
+    "event": { "type": "string" },
+    "captured_on": { "type": "string", "format": "date" },
+    "entities": {
+      "type": "object",
+      "required": ["brand"],
+      "properties": {
+        "brand": { "type": "array", "minItems": 1, "items": { "type": "string" } },
+        "kol": { "type": "array", "items": { "type": "string" } },
+        "indication": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

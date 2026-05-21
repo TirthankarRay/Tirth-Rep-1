@@ -1,0 +1,72 @@
+# Human-readable mirror of libs/classifier/src/mneme_classifier/rules.py.
+# This file is for compliance / legal / MLR review. The runtime classifier
+# is the Python module; this YAML is documentation. If the two ever diverge,
+# the Python wins — and that divergence is itself a defect.
+
+pack: commercial-mlr-strict
+version: 1
+description: |
+  Materiality rules for the pharma commercial vault.
+  Evaluated in priority order; first match wins.
+
+rules:
+  - code: R1-no-source
+    when: "claimed_sources is empty AND requires_source"
+    verdict: reject
+    reason: "No source provided for a change that requires one."
+
+  - code: R2-mlr-boundary
+    when: "target_type == competitive-landscape OR has_label_adjacent_claim"
+    verdict: material
+    co_sign: [brand, medical, mlr]
+    reason: "MLR boundary crossed; brand + medical + MLR must co-sign."
+
+  - code: R3-competitor-data
+    when: "touches_competitor_data"
+    verdict: material
+    co_sign: [brand, medical]
+    reason: "Competitor data change requires brand and medical co-sign."
+
+  - code: R4-payer-tier-change
+    when: "target_type == payer-coverage AND coverage_tier changed"
+    verdict: material
+    route: market-access
+    reason: "Coverage-tier change routed to market access."
+
+  - code: R5-pricing
+    when: "target_type == pricing-record"
+    verdict: material
+    co_sign: [legal, market-access]
+    reason: "Pricing edits require legal and market-access co-sign."
+
+  - code: R6-regulatory
+    when: "asserts_regulatory_change"
+    verdict: material
+    route: regulatory-affairs
+    reason: "Regulatory assertion routed to regulatory affairs."
+
+  - code: R7-contradiction
+    when: "any contradiction surfaced in review window"
+    verdict: material
+    reason: "Contradiction detected against existing claim(s)."
+
+  - code: R8-msl-insight
+    when: "target_type == msl-insight"
+    verdict: attention
+    route: medical
+    reason: "MSL insight; medical is notified."
+
+  - code: R9-agent-quality
+    when: "agent_quality_score < 0.7"
+    verdict: attention
+    reason: "Agent quality below threshold."
+
+  - code: R10-large-delta
+    when: "body_delta_pct > 20"
+    verdict: attention
+    reason: "Body delta exceeds 20% of the file."
+
+  - code: DEFAULT-routine
+    when: "no other rule fired"
+    verdict: routine
+    reason: "Auto-mergeable; reindex on merge."

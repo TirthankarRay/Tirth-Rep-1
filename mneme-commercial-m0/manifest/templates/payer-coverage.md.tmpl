@@ -1,0 +1,30 @@
+---
+id: kb-{{slug}}
+type: payer-coverage
+title: "{{title}}"
+version: 1
+owners: ["u:market-access-lead"]
+status: approved
+last_verified: {{date}}
+review_cycle: 14
+classification: confidential
+audience: ["bu:commercial-onco", "bu:market-access"]
+residency: ["us"]
+coverage_tier: tier2
+entities:
+  brand: ["{{brand}}"]
+  payer: ["{{payer}}"]
+sources:
+  - { ref: "https://example.local/payer-bulletin", date: {{date}}, kind: external }
+confidence: medium
+---
+# {{title}}
+
+## Current Coverage
+
+## Recent Policy Changes
+
+## Field Implications
+
+## Sources
+[^s1]: Source description.
