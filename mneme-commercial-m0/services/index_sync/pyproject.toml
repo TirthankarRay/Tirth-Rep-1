@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mneme-index-sync"
+version = "0.1.0"
+description = "Mneme index sync — git → Postgres (files, chunks, edges)"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "asyncpg>=0.29",
+    "python-frontmatter>=1.1",
+    "sentence-transformers>=2.7",
+    "GitPython>=3.1",
+    "mneme-schemas",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
