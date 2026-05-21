@@ -30,17 +30,17 @@ services:
       VAULT_PATH: /vault
       RULE_PACK: ${RULE_PACK:-commercial-mlr-strict}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+      INDEX_SYNC_URL: http://index-sync:8003
+      MCP_DEFAULT_USER: u:brand-lead-brandx
     ports:
       - "8001:8001"
     depends_on:
       postgres:
         condition: service_healthy
     volumes:
+      # vault must be writable — proposals create branches + commits
       - ./vault:/vault
       - ./manifest:/manifest:ro
-      - ./libs:/app/libs:ro
-      - ./services/gateway:/app/services/gateway:ro
-      - ./demo:/app/demo:ro
     command: python -m mneme_gateway.main
 
   index-sync:
@@ -61,9 +61,8 @@ services:
       postgres:
         condition: service_healthy
     volumes:
-      - ./vault:/vault
-      - ./libs:/app/libs:ro
-      - ./services/index_sync:/app/services/index_sync:ro
+      - ./vault:/vault:ro
+      - ./manifest:/manifest:ro
     command: python -m mneme_index_sync.main
 
   console-api:
@@ -77,6 +76,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mneme}
       POSTGRES_DB: ${POSTGRES_DB:-mneme}
       VAULT_PATH: /vault
+      INDEX_SYNC_URL: http://index-sync:8003
     ports:
       - "8002:8002"
     depends_on:
@@ -84,8 +84,7 @@ services:
         condition: service_healthy
     volumes:
       - ./vault:/vault
-      - ./libs:/app/libs:ro
-      - ./services/console_api:/app/services/console_api:ro
+      - ./manifest:/manifest:ro
     command: python -m mneme_console_api.main
 
   console:

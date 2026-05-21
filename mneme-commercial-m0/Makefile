@@ -11,21 +11,13 @@ up:
 	@echo "Gateway MCP:    http://localhost:8001"
 	@echo "Console API:    http://localhost:8002"
 
-# Initialize the vault as a real git repo (idempotent)
+# Initialize the vault as a real git repo (idempotent). Runs *inside* the
+# gateway container so file ownership matches the runtime user.
 init-vault:
-	@if [ ! -d vault/.git ]; then \
-		cd vault && git init -q -b main && \
-		git config user.email "seed@mneme.local" && \
-		git config user.name "Mneme Seed" && \
-		git add -A && git commit -q -m "seed: initial commercial vault" || true ; \
-	else \
-		echo "vault/.git already exists; skipping init"; \
-	fi
+	docker compose exec -T gateway python -m mneme_demo.seed.seed_vault
 
-# Seed the vault with synthetic content and trigger initial index sync
+# Seed the vault (validates schemas + initializes git) and rebuild indices
 seed: init-vault
-	docker compose exec -T gateway python -m mneme_demo.seed.seed_vault || true
-	$(MAKE) init-vault
 	docker compose exec -T index-sync python -m mneme_index_sync.rebuild
 
 # Reset everything (drop DB, reset vault repo to seed state)
