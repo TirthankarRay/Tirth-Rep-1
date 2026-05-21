@@ -1,0 +1,102 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: mneme-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mneme}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mneme}
+      POSTGRES_DB: ${POSTGRES_DB:-mneme}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./deploy/docker/postgres-init.sql:/docker-entrypoint-initdb.d/00-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-mneme} -d ${POSTGRES_DB:-mneme}"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  gateway:
+    build:
+      context: .
+      dockerfile: deploy/docker/gateway.Dockerfile
+    container_name: mneme-gateway
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_USER: ${POSTGRES_USER:-mneme}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mneme}
+      POSTGRES_DB: ${POSTGRES_DB:-mneme}
+      VAULT_PATH: /vault
+      RULE_PACK: ${RULE_PACK:-commercial-mlr-strict}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+    ports:
+      - "8001:8001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./vault:/vault
+      - ./manifest:/manifest:ro
+      - ./libs:/app/libs:ro
+      - ./services/gateway:/app/services/gateway:ro
+      - ./demo:/app/demo:ro
+    command: python -m mneme_gateway.main
+
+  index-sync:
+    build:
+      context: .
+      dockerfile: deploy/docker/validator.Dockerfile
+    container_name: mneme-index-sync
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_USER: ${POSTGRES_USER:-mneme}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mneme}
+      POSTGRES_DB: ${POSTGRES_DB:-mneme}
+      VAULT_PATH: /vault
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}
+    ports:
+      - "8003:8003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./vault:/vault
+      - ./libs:/app/libs:ro
+      - ./services/index_sync:/app/services/index_sync:ro
+    command: python -m mneme_index_sync.main
+
+  console-api:
+    build:
+      context: .
+      dockerfile: deploy/docker/validator.Dockerfile
+    container_name: mneme-console-api
+    environment:
+      POSTGRES_HOST: postgres
+      POSTGRES_USER: ${POSTGRES_USER:-mneme}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mneme}
+      POSTGRES_DB: ${POSTGRES_DB:-mneme}
+      VAULT_PATH: /vault
+    ports:
+      - "8002:8002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./vault:/vault
+      - ./libs:/app/libs:ro
+      - ./services/console_api:/app/services/console_api:ro
+    command: python -m mneme_console_api.main
+
+  console:
+    image: node:20-alpine
+    container_name: mneme-console
+    working_dir: /app
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./apps/console:/app
+    command: sh -c "npm install --no-audit --no-fund && npm run dev -- --host 0.0.0.0"
+
+volumes:
+  postgres-data:
