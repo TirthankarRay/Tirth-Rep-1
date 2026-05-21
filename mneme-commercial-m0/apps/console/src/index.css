@@ -1,0 +1,42 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body, #root {
+    height: 100%;
+  }
+  body {
+    background-color: #0a0d18;
+    color: #dde2f0;
+    font-family: 'Inter', system-ui, sans-serif;
+    font-feature-settings: 'cv11', 'ss01';
+  }
+  code, pre {
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-mneme-surface border border-mneme-line rounded-lg p-4;
+  }
+  .card-head {
+    @apply text-xs uppercase tracking-wider text-mneme-dim font-mono mb-2;
+  }
+  .chip {
+    @apply inline-flex items-center px-2 py-0.5 rounded-md text-xs font-mono border;
+  }
+  .chip-material { @apply border-mneme-bad text-mneme-bad; }
+  .chip-attention { @apply border-mneme-warn text-mneme-warn; }
+  .chip-routine { @apply border-mneme-good text-mneme-good; }
+  .chip-reject  { @apply border-mneme-dim text-mneme-dim; }
+  .btn {
+    @apply inline-flex items-center px-3 py-1.5 rounded border border-mneme-line
+      hover:border-mneme-accent text-sm transition-colors;
+  }
+  .btn-primary {
+    @apply bg-mneme-accent text-mneme-bg border-mneme-accent
+      hover:bg-mneme-accent/90;
+  }
+}
